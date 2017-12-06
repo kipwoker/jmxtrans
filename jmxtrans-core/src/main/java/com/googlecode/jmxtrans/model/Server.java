@@ -62,9 +62,11 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.fasterxml.jackson.databind.annotation.JsonSerialize.Inclusion.NON_NULL;
 import static com.google.common.base.MoreObjects.firstNonNull;
@@ -98,7 +100,7 @@ import static javax.management.remote.rmi.RMIConnectorServer.RMI_CLIENT_SOCKET_F
 })
 @Immutable
 @ThreadSafe
-@EqualsAndHashCode(exclude = {"queries", "pool", "outputWriters", "outputWriterFactories"})
+@EqualsAndHashCode(exclude = {"queries", "pool", "outputWriters", "outputWriterFactories", "serverPauseDeadlineMillis"})
 @ToString(of = {"pid", "host", "port", "url", "cronExpression", "numQueryThreads"})
 public class Server implements JmxConnectionProvider {
 
@@ -106,6 +108,7 @@ public class Server implements JmxConnectionProvider {
 	private static final String FRONT = "service:jmx:rmi:///jndi/rmi://";
 	private static final String BACK = "/jmxrmi";
 	private static final int DEFAULT_SOCKET_SO_TIMEOUT_MILLIS = 10000;
+	private static final int DEFAULT_SERVER_PAUSE_TIMEOUT_MILLIS = 5 * 60 * 1000;
 
 	private static final Logger logger = LoggerFactory.getLogger(Server.class);
 
@@ -163,6 +166,7 @@ public class Server implements JmxConnectionProvider {
 
 	@Nonnull private final KeyedObjectPool<JmxConnectionProvider, JMXConnection> pool;
 	@Nonnull @Getter private final ImmutableList<OutputWriterFactory> outputWriterFactories;
+	@Nonnull @Getter private final AtomicLong serverPauseDeadlineMillis;
 
 	@JsonCreator
 	public Server(
@@ -268,9 +272,16 @@ public class Server implements JmxConnectionProvider {
 		this.pool = checkNotNull(pool);
 		this.outputWriterFactories = ImmutableList.copyOf(firstNonNull(outputWriterFactories, ImmutableList.<OutputWriterFactory>of()));
 		this.outputWriters = ImmutableList.copyOf(firstNonNull(outputWriters, ImmutableList.<OutputWriter>of()));
+		this.serverPauseDeadlineMillis = new AtomicLong(0L);
 	}
 
 	public Iterable<Result> execute(Query query) throws Exception {
+		if (!isAlive())
+		{
+			logger.error("Server paused until {}", new Date(serverPauseDeadlineMillis.get()));
+			return ImmutableList.of();
+		}
+
 		UUID requestId = UUID.randomUUID();
 		JMXConnection jmxConnection = null;
 		try {
@@ -289,6 +300,7 @@ public class Server implements JmxConnectionProvider {
 
 			return results.build();
 		} catch (Exception e) {
+			pauseServer();
 			if (jmxConnection != null) {
 				logger.debug("Server.execute: try to invalidate {} {}", requestId, this);
 				pool.invalidateObject(this, jmxConnection);
@@ -445,6 +457,17 @@ public class Server implements JmxConnectionProvider {
 		logger.debug("Finished running outputWriters for query: {}", query);
 	}
 
+	private void pauseServer() {
+		long currentTime = System.currentTimeMillis();
+		serverPauseDeadlineMillis.compareAndSet(serverPauseDeadlineMillis.get(), currentTime + DEFAULT_SERVER_PAUSE_TIMEOUT_MILLIS);
+		logger.warn("Paused server until {}", new Date(serverPauseDeadlineMillis.get()));
+	}
+
+	@JsonIgnore
+	public boolean isAlive() {
+		return System.currentTimeMillis() > serverPauseDeadlineMillis.get();
+	}
+
 	/**
 	 * Factory to create a JMXServiceURL from a pid. Inner class to prevent class
 	 * loader issues when tools.jar isn't present.
@@ -505,6 +528,7 @@ public class Server implements JmxConnectionProvider {
 		@Setter private Integer numQueryThreads;
 		@Setter private boolean local;
 		@Setter private boolean ssl;
+		@Setter private AtomicLong serverPauseDeadlineMillis;
 		private final List<OutputWriterFactory> outputWriterFactories = new ArrayList<>();
 		private final List<OutputWriter> outputWriters = new ArrayList<>();
 		private final List<Query> queries = new ArrayList<>();
@@ -528,6 +552,7 @@ public class Server implements JmxConnectionProvider {
 			this.ssl = server.ssl;
 			this.queries.addAll(server.queries);
 			this.pool = server.pool;
+			this.serverPauseDeadlineMillis = server.serverPauseDeadlineMillis;
 		}
 
 		public Builder clearQueries() {
