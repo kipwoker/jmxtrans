@@ -64,6 +64,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static com.fasterxml.jackson.databind.annotation.JsonSerialize.Inclusion.NON_NULL;
 import static com.google.common.base.MoreObjects.firstNonNull;
@@ -270,27 +271,38 @@ public class Server implements JmxConnectionProvider {
 	}
 
 	public Iterable<Result> execute(Query query) throws Exception {
+		UUID requestId = UUID.randomUUID();
 		JMXConnection jmxConnection = null;
 		try {
+			logger.debug("Server.execute: start execute query {} {}", requestId, this);
 			jmxConnection = pool.borrowObject(this);
+			logger.debug("Server.execute: object borrowed {} {}", requestId, this);
+
 			ImmutableList.Builder<Result> results = ImmutableList.builder();
 			MBeanServerConnection connection = jmxConnection.getMBeanServerConnection();
 
+			logger.debug("Server.execute: try to connect {} {}", requestId, this);
 			for (ObjectName queryName : query.queryNames(connection)) {
 				results.addAll(query.fetchResults(connection, queryName));
 			}
+			logger.debug("Server.execute: read successful {} {}", requestId, this);
 
 			return results.build();
 		} catch (Exception e) {
 			if (jmxConnection != null) {
+				logger.debug("Server.execute: try to invalidate {} {}", requestId, this);
 				pool.invalidateObject(this, jmxConnection);
 				jmxConnection = null;
+				logger.debug("Server.execute: invalidated {} {}", requestId, this);
 			}
 			throw e;
 		}
 		finally {
 			if (jmxConnection != null) {
 				pool.returnObject(this, jmxConnection);
+				logger.debug("Server.execute: returned {} {}", requestId, this);
+			} else {
+				logger.debug("Server.execute: jmxConnection was empty {} {}", requestId, this);
 			}
 		}
 	}

@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -54,10 +55,13 @@ public class JmxUtils {
 	}
 
 	public void processServer(Server server) throws Exception {
+		UUID requestId = UUID.randomUUID();
 		for (Query query : server.getQueries()) {
 			ProcessQueryThread pqt = new ProcessQueryThread(resultProcessor, server, query);
 			try {
+				logger.debug("JmxUtils.processServer: start {} active={} queueSize={}", requestId, executorService.getActiveCount(), executorService.getQueue().size());
 				executorService.submit(pqt);
+				logger.debug("JmxUtils.processServer: submitted {} active={} queueSize={}", requestId, executorService.getActiveCount(), executorService.getQueue().size());
 			} catch (RejectedExecutionException ree) {
 				logger.error("Could not submit query {}. You could try to size the 'queryProcessorExecutor' to a larger size.", pqt, ree);
 			}
