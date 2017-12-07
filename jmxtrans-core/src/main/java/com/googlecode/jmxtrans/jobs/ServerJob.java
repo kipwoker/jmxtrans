@@ -54,6 +54,9 @@ public class ServerJob implements Job {
 	public void execute(JobExecutionContext context) throws JobExecutionException {
 		JobDataMap map = context.getMergedJobDataMap();
 		Server server = (Server) map.get(Server.class.getName());
+		if (!server.isAlive()){
+			log.warn("Skip server job because it's unavailable: {}", server);
+		}
 
 		log.debug("+++++ Started server job: {}", server);
 		try {
