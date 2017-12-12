@@ -24,12 +24,14 @@ package com.googlecode.jmxtrans.jmx;
 
 import com.googlecode.jmxtrans.model.Query;
 import com.googlecode.jmxtrans.model.Server;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.Hashtable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -42,22 +44,26 @@ public class JmxUtils {
 
 	@Nonnull private static final Logger logger = LoggerFactory.getLogger(JmxUtils.class);
 
-	@Nonnull private final ThreadPoolExecutor executorService;
+	@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "It's singleton")
+	@Nonnull private Hashtable<Server, ThreadPoolExecutor> executors;
 	@Nonnull private final ResultProcessor resultProcessor;
 
 	@Inject
 	public JmxUtils(
-			@Named("queryProcessorExecutor") @Nonnull ThreadPoolExecutor executorService,
+			@Named("queryProcessorExecutors") @Nonnull Hashtable<Server, ThreadPoolExecutor> executors,
 			@Nonnull ResultProcessor resultProcessor) {
-		this.executorService = executorService;
+		this.executors = executors;
 		this.resultProcessor = resultProcessor;
 	}
 
 	public void processServer(Server server) throws Exception {
+		final ThreadPoolExecutor executor = executors.get(server);
+
 		for (Query query : server.getQueries()) {
 			ProcessQueryThread pqt = new ProcessQueryThread(resultProcessor, server, query);
 			try {
-				executorService.submit(pqt);
+				logger.debug("JmxUtils.processServer submit {} Active={} QueueSize={}", server, executor.getActiveCount(), executor.getQueue().size());
+				executor.submit(pqt);
 			} catch (RejectedExecutionException ree) {
 				logger.error("Could not submit query {}. You could try to size the 'queryProcessorExecutor' to a larger size.", pqt, ree);
 			}

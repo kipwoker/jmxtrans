@@ -65,6 +65,7 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.fasterxml.jackson.databind.annotation.JsonSerialize.Inclusion.NON_NULL;
@@ -110,6 +111,9 @@ public class Server implements JmxConnectionProvider {
 	private static final int DEFAULT_SERVER_PAUSE_TIMEOUT_MILLIS = 5 * 60 * 1000;
 
 	private static final Logger logger = LoggerFactory.getLogger(Server.class);
+
+	/** Returns id for internal logic */
+	@Getter private final String id;
 
 	/**
 	 * Some writers (GraphiteWriter) use the alias in generation of the unique
@@ -272,18 +276,23 @@ public class Server implements JmxConnectionProvider {
 		this.outputWriterFactories = ImmutableList.copyOf(firstNonNull(outputWriterFactories, ImmutableList.<OutputWriterFactory>of()));
 		this.outputWriters = ImmutableList.copyOf(firstNonNull(outputWriters, ImmutableList.<OutputWriter>of()));
 		this.serverPauseDeadlineMillis = new AtomicLong(0L);
+		this.id = String.format("%s_%s_%s", host, port, pid);
 	}
 
 	public Iterable<Result> execute(Query query) throws Exception {
 		if (!isAlive())
 		{
-			logger.error("Server paused until {}", new Date(serverPauseDeadlineMillis.get()));
+			logger.error("Server already paused until {}", new Date(serverPauseDeadlineMillis.get()));
 			return ImmutableList.of();
 		}
 
+		UUID requestId = UUID.randomUUID();
+
 		JMXConnection jmxConnection = null;
 		try {
+			logger.debug("Server.execute start borrow {} {}", requestId, this);
 			jmxConnection = pool.borrowObject(this);
+			logger.debug("Server.execute borrowed {} {}", requestId, this);
 			ImmutableList.Builder<Result> results = ImmutableList.builder();
 			MBeanServerConnection connection = jmxConnection.getMBeanServerConnection();
 
@@ -295,15 +304,20 @@ public class Server implements JmxConnectionProvider {
 		} catch (Exception e) {
 			pauseServer();
 			if (jmxConnection != null) {
+				logger.debug("Server.execute start invalidate {} {}", requestId, this);
 				pool.invalidateObject(this, jmxConnection);
+				logger.debug("Server.execute invalidated {} {}", requestId, this);
 				jmxConnection = null;
 			}
 			throw e;
 		}
 		finally {
 			if (jmxConnection != null) {
+				logger.debug("Server.execute start return {} {}", requestId, this);
 				pool.returnObject(this, jmxConnection);
+				logger.debug("Server.execute start returned {} {}", requestId, this);
 			}
+			logger.debug("Server.execute finished {} {}", requestId, this);
 		}
 	}
 
@@ -448,7 +462,7 @@ public class Server implements JmxConnectionProvider {
 	private void pauseServer() {
 		long currentTime = System.currentTimeMillis();
 		serverPauseDeadlineMillis.compareAndSet(serverPauseDeadlineMillis.get(), currentTime + DEFAULT_SERVER_PAUSE_TIMEOUT_MILLIS);
-		logger.warn("Paused server until {}", new Date(serverPauseDeadlineMillis.get()));
+		logger.warn("Server paused until {}", new Date(serverPauseDeadlineMillis.get()));
 	}
 
 	@JsonIgnore

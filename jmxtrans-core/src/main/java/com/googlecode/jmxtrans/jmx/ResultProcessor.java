@@ -28,10 +28,12 @@ import com.googlecode.jmxtrans.model.OutputWriter;
 import com.googlecode.jmxtrans.model.Query;
 import com.googlecode.jmxtrans.model.Result;
 import com.googlecode.jmxtrans.model.Server;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
+import java.util.Hashtable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -41,17 +43,20 @@ public class ResultProcessor {
 
 	private final Logger logger = LoggerFactory.getLogger(ResultProcessor.class);
 
-	@Nonnull private final ThreadPoolExecutor executorService;
+	@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "It's singleton")
+	@Nonnull private Hashtable<Server, ThreadPoolExecutor> executorServices;
 
 	@Inject
-	public ResultProcessor(@Named("resultProcessorExecutor") @Nonnull ThreadPoolExecutor executorService) {
-		this.executorService = executorService;
+	public ResultProcessor(@Named("resultProcessorExecutors") @Nonnull Hashtable<Server, ThreadPoolExecutor> executorServices) {
+		this.executorServices = executorServices;
 	}
 
 	public void submit(@Nonnull final Server server, @Nonnull final Query query, @Nonnull final Iterable<Result> results) {
+		final ThreadPoolExecutor executor = executorServices.get(server);
+
 		for (final OutputWriter writer : concat(query.getOutputWriterInstances(), server.getOutputWriters())) {
 			try {
-				executorService.submit(new Runnable() {
+				executor.submit(new Runnable() {
 					@Override
 					public void run() {
 						try {
